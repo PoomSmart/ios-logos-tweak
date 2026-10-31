@@ -68,7 +68,7 @@ Use runtime ivar APIs in **non-tweak** targets (preferences, CLI tools) that do 
 
 ```logos
 %hook Foo
-%new
+%new(v@:)
 - (void)tweak_helper { }
 %end
 ```
@@ -90,7 +90,7 @@ From elsewhere after hook is installed: `&%orig` inside the hook body to capture
 
 ## `%orig` and blocks
 
-Logos supports block arguments to `%orig` for methods that take completion handlers; use `.xm` and see Theos docs for the `^` forms.
+Logos supports block arguments to `%orig` for methods that take completion handlers; keep the hook in **`.x`** if the body is plain ObjC, or **`.xm`** if that file already compiles as ObjC++. See Theos docs for the `^` forms.
 
 ## When manual APIs are OK
 

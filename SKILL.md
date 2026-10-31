@@ -13,13 +13,28 @@ Do **not** hand-write Substrate hook boilerplate in tweak source unless Logos ca
 
 ## File layout
 
-| Extension | Use |
-|-----------|-----|
-| `.x` | Logos + Objective-C |
-| `.xm` | Logos + Objective-C++ (blocks, C++ in hooks) |
-| `.xi` | Logos included into another Logos file |
+**Default: `.x`.** Most tweaks use a single `Tweak.x` (Logos + Objective-C). Theos runs Logos on the file, then compiles the result as ObjC.
 
-Keep **interfaces and constants** in normal `.h` / `.m` when they are not hooks. Keep **all hooks** in Logos.
+| Extension | Compiles as | When to use |
+|-----------|-------------|-------------|
+| **`.x`** | Objective-C | **Default.** `%hook`, `%hookf`, `%new`, `%orig`, `%property`, blocks, and normal Foundation/UIKit code. |
+| **`.xm`** | Objective-C++ | Only when this **translation unit** needs C++ or Substrate’s C++ APIs (see below). |
+| **`.xi` / `.xmi`** | Included fragments | Rare: Logos inside `#define` macros or `#include` chains; prefer splitting into separate `.x`/`.xm` files with `extern` instead ([Theos docs](https://theos.dev/docs/logos-file-extensions)). |
+
+### Use `.xm` when this file contains
+
+- **`MSHookIvar<T>`** or **`MSIvarHook`** (implemented as C++ templates in `<substrate.h>`).
+- **C++** only valid in ObjC++: `std::`, `namespace`, templates, lambdas, C++ types in hook bodies.
+- **`%orig`** forms that embed **block literals** in the hook implementation when your toolchain/setup requires ObjC++ for those expansions (uncommon; most hooks stay in `.x`).
+
+### Stay on `.x` when
+
+- Hooks are plain Objective-C (even with blocks, `@autoreleasepool`, etc.).
+- You do not call `MSHookIvar` in that file.
+
+If only one hook file needs ivar access, keep **`Tweak.x`** and add a small **`Something.xm`** (or move just those hooks to `.xm`) rather than renaming the whole project to `.xm` without reason.
+
+Keep **interfaces and constants** in normal `.h` / `.m` when they are not hooks. Keep **all hooks** in Logos (`.x` / `.xm`, not raw `.m` with `MSHook*`).
 
 Do not `#include <substrate.h>` in Logos files; Theos/Logos adds it in generated code.
 
@@ -78,7 +93,7 @@ Add methods on an existing class inside `%hook`:
 ```logos
 %hook MyTargetClass
 
-%new
+%new(v@:@)
 - (void)myTweak_didTap:(id)sender {
     // no %orig — method did not exist before
 }
@@ -89,7 +104,8 @@ Add methods on an existing class inside `%hook`:
 ```
 
 - Use `%new` for any method that **does not exist** on the class (including helpers only your tweak calls).
-- Use `%new(type encoding)` when Logos cannot infer the type encoding (unusual parameter types, varargs edge cases).
+- Always write **`%new(typeencoding)`** with the **exact** Objective-C method type encoding (e.g. `%new(v@:)` for `- (void)foo`, `%new(v@:@)` for `- (void)foo:(id)x`, `%new(@@:)` for `- (id)bar`). Bare `%new` without parentheses makes Logos **generate** an encoding from the declaration; that extra work is unnecessary when you already know the signature.
+- Match the encoding to the method you declare; when unsure, compile a stub and read `@encode` / `method_getTypeEncoding`, or copy from a class dump for the same selector shape.
 - Use `%property` for associated state on hooked classes instead of `objc_setAssociatedObject` in every hook (unless you need fine-grained control).
 
 **Avoid:** `class_addMethod` + static C functions for tweak-only ObjC methods on hooked classes.
@@ -112,7 +128,7 @@ In **tweak dylib code** linked against Cydia Substrate (Logos `.x`/`.xm`, or `.m
 
 Inside a hook body, the **`MSIvarHook(type, name)`** macro (Substrate) is equivalent to a typed reference for an ivar whose **name matches** the stringized token (e.g. `MSIvarHook(UIView *, _contentView)`).
 
-- Use **`.xm`** when the translation unit needs C++ (required for the `MSHookIvar` template).
+- Use **`.xm`** for this file if it uses **`MSHookIvar`** / **`MSIvarHook`**; otherwise keep ivar-free hooks in **`.x`**.
 - For **state your tweak adds**, prefer **`%property`** on the hooked class, not reading/writing foreign ivars you invent.
 - In targets **without** Substrate (preference bundles, standalone tools, libraries not injected into processes), use the Objective-C runtime ivar APIs or public accessors; do not assume `MSHookIvar` is linked.
 
@@ -189,13 +205,13 @@ Note: `%hookf` is **not** supported with `generator=internal`. Pick the generato
 ## Code organization
 
 - One `%hook ClassName` block per class; multiple methods inside one block.
-- Split large tweaks with `%group` in separate `.xm` files only when using [hook splitting](https://theos.dev/docs/logos-hook-splitting) (`%init` from a shared constructor); ungrouped hooks in split files still auto-init per file.
+- Split large tweaks with `%group` in separate Logos files when using [hook splitting](https://theos.dev/docs/logos-hook-splitting) (`%init` from a shared constructor); use `.x` unless that file needs `.xm` for C++/`MSHookIvar`.
 - Declare classes you hook in headers (`@interface`) or private headers; Logos does not replace the need for correct types at compile time.
 - Use `logos_interface` / empty `@interface` in `.x` when you need typed calls to `%new` APIs from plain `.m` files.
 
 ## Common mistakes
 
-1. **Hooking in `.m` with Substrate** while the rest of the project uses Logos — consolidate into `.xm`.
+1. **Hooking in `.m` with Substrate** while the rest of the project uses Logos — move hooks into **`Tweak.x`** (or `.xm` only if that file needs ObjC++).
 2. **Missing `%end`** or nesting `%hook` inside a method (invalid; Logos errors).
 3. **Calling `%orig` in a `%new` method** — unsupported; call super or another selector explicitly if needed.
 4. **Forgetting `%init` for `%group`** — hooks never run.
@@ -203,16 +219,17 @@ Note: `%hookf` is **not** supported with `generator=internal`. Pick the generato
 6. **Using `%hookf` inside `%hook`** — `%hookf` is top-level (except inside `%group`).
 7. **`objc_msgSend` instead of `[obj msg]`** — declare the API and use bracket syntax.
 8. **`ivar_getOffset` / `object_getIvar` in tweak code** — use `MSHookIvar` when Substrate is linked.
+9. **Bare `%new` without type encoding** — use `%new(v@:)` (etc.) matching the method signature.
 
 ## Review checklist
 
 When writing or reviewing tweak code:
 
 - [ ] Hooks live in `.x`/`.xm` with `%hook` / `%hookf`, not raw `MSHook*`
-- [ ] New tweak methods use `%new`; ivar-like state uses `%property` where appropriate
+- [ ] New tweak methods use `%new(typeencoding)` with exact encodings; ivar-like state uses `%property` where appropriate
 - [ ] `%orig` usage is correct; grouped hooks have explicit `%init`
 - [ ] Dynamic classes/symbols wired through `%init(...=...)` not one-off hook calls in `%ctor`
-- [ ] File extension matches language needs (`.xm` if using ObjC++)
+- [ ] Default **`Tweak.x`** unless the file uses C++ or `MSHookIvar`; do not use `.xm` “just because”
 - [ ] No redundant `respondsToSelector:` where OS floor or `%group` already guarantees the API; runtime checks only where version checks are intentionally light
 - [ ] No `objc_msgSend` for normal calls; use `[receiver …]` with headers for private selectors
 - [ ] Private ivar access in the tweak dylib uses `MSHookIvar`, not manual runtime offset/`object_getIvar` (runtime OK only in non-Substrate targets)
