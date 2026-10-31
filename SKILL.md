@@ -76,15 +76,19 @@ If a symbol is undeclared in the public SDK, add a **private header** or class/c
 ```
 
 - First argument is return type; second is the **symbol name**; rest are parameters (no implicit `self`/`_cmd`).
-- For private symbols, resolve at init time:
+- For private symbols, resolve at init time with **`MSFindSymbol(MSGetImageByName(...), "_symbol")`**. Pass the **image that owns the symbol** as the first argument to `MSFindSymbol`; do not pass `NULL`.
 
 ```logos
 %ctor {
-    %init(MGGetBoolAnswer = MSFindSymbol(NULL, "_MGGetBoolAnswer"));
+    void *gestalt = MSGetImageByName("/usr/lib/libMobileGestalt.dylib");
+    %init(MGGetBoolAnswer = MSFindSymbol(gestalt, "_MGGetBoolAnswer"));
 }
 ```
 
-**Avoid:** `MSHookFunction` / `MSFindSymbol` + manual replacement functions when `%hookf` + `%init` suffices.
+- **`MSFindSymbol(NULL, name)`** searches every loaded image. That pattern is **discouraged**: some runtime modification / injection setups can crash or behave badly during global symbol lookup. Always **`MSGetImageByName("/path/to/Image.dylib")`** (framework binary path as Substrate expects) and pass that `MSImageRef` to `MSFindSymbol`.
+- If lookup fails, guard before `%init` (skip the group or log) rather than passing a null pointer into `%init`.
+
+**Avoid:** `MSHookFunction` + manual replacement when `%hookf` + `%init` suffices; **`MSFindSymbol(NULL, ...)`** for dynamic `%hookf` targets.
 
 ## New methods and storage: `%new` and `%property`
 
@@ -220,6 +224,7 @@ Note: `%hookf` is **not** supported with `generator=internal`. Pick the generato
 7. **`objc_msgSend` instead of `[obj msg]`** — declare the API and use bracket syntax.
 8. **`ivar_getOffset` / `object_getIvar` in tweak code** — use `MSHookIvar` when Substrate is linked.
 9. **Bare `%new` without type encoding** — use `%new(v@:)` (etc.) matching the method signature.
+10. **`MSFindSymbol(NULL, …)`** — use `MSFindSymbol(MSGetImageByName("/path/to/dylib"), "_symbol")`.
 
 ## Review checklist
 
@@ -228,7 +233,7 @@ When writing or reviewing tweak code:
 - [ ] Hooks live in `.x`/`.xm` with `%hook` / `%hookf`, not raw `MSHook*`
 - [ ] New tweak methods use `%new(typeencoding)` with exact encodings; ivar-like state uses `%property` where appropriate
 - [ ] `%orig` usage is correct; grouped hooks have explicit `%init`
-- [ ] Dynamic classes/symbols wired through `%init(...=...)` not one-off hook calls in `%ctor`
+- [ ] Dynamic `%hookf` symbols resolved with **`MSGetImageByName` + `MSFindSymbol(image, …)`**, never `MSFindSymbol(NULL, …)`
 - [ ] Default **`Tweak.x`** unless the file uses C++ or `MSHookIvar`; do not use `.xm` “just because”
 - [ ] No redundant `respondsToSelector:` where OS floor or `%group` already guarantees the API; runtime checks only where version checks are intentionally light
 - [ ] No `objc_msgSend` for normal calls; use `[receiver …]` with headers for private selectors

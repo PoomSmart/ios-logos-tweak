@@ -42,7 +42,14 @@ static int _hook_getpid(void) { return _orig_getpid(); }
 %ctor { MSHookFunction((void *)getpid, (void *)_hook_getpid, (void **)&_orig_getpid); }
 ```
 
-Use `%init(fn = MSFindSymbol(...))` when the function pointer is not linkable.
+Use `%init(fn = MSFindSymbol(MSGetImageByName("/path/to/Owner.dylib"), "_fn"))` when the function is not linkable. Avoid `MSFindSymbol(NULL, "_fn")` (global search; unsafe on some injection runtimes).
+
+```logos
+%ctor {
+    void *image = MSGetImageByName("/usr/lib/libMobileGestalt.dylib");
+    %init(MGGetBoolAnswer = MSFindSymbol(image, "_MGGetBoolAnswer"));
+}
+```
 
 ## Instance variables
 
