@@ -56,6 +56,12 @@ Use `%init(fn = MSFindSymbol(MSGetImageByName("/path/to/Owner.dylib"), "_fn"))` 
 - Each **`%group`** may appear in **`%init` only once** in a Logos file. Logos errors on `re-%init` even when the two calls sit in different `if`/`else` branches.
 - Version-specific hooks: use **separate groups** (`%init(iOS9)` vs `%init(iOS8)`), or **one** `%init` with runtime `ClassName=expr` substitutions computed before the init line.
 
+## Filter plist
+
+- Store **`YourTweak.plist`** as **XML** in git for readable filters and diffs.
+- **`make package FINALPACKAGE=1`** converts plists to binary in the release package (Theos `FINALPACKAGE` behavior).
+- Convert binary → XML: `plutil -convert xml1 YourTweak.plist`.
+
 ## Instance variables
 
 **Prefer (Substrate-linked tweak code):**

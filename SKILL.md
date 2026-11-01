@@ -241,6 +241,21 @@ Note: `%hookf` is **not** supported with `generator=internal`. Pick the generato
 - Declare classes you hook in headers (`@interface`) or private headers; Logos does not replace the need for correct types at compile time.
 - Use `logos_interface` / empty `@interface` in `.x` when you need typed calls to `%new` APIs from plain `.m` files.
 
+## Filter plist (`.plist`)
+
+Keep the tweak **filter plist** (e.g. `MyTweak.plist`) in the repo as **XML** (`plutil` “xml1”), not binary bplist.
+
+- **Readability:** `Bundles`, `Classes`, and `Executables` filters are easy to review in git diffs.
+- **Release builds:** `make package FINALPACKAGE=1` already **converts plists to binary** in the packaged `.deb`; you do not need to commit binary plists for production.
+
+To convert an existing binary plist back to XML:
+
+```bash
+plutil -convert xml1 MyTweak.plist
+```
+
+Commit the XML source; let Theos optimize at package time.
+
 ## Common mistakes
 
 1. **Hooking in `.m` with Substrate** while the rest of the project uses Logos — move hooks into **`Tweak.x`** (or `.xm` only if that file needs ObjC++).
@@ -254,6 +269,7 @@ Note: `%hookf` is **not** supported with `generator=internal`. Pick the generato
 9. **`ivar_getOffset` / `object_getIvar` in tweak code** — use `MSHookIvar` when Substrate is linked.
 10. **Bare `%new` without type encoding** — use `%new(v@:)` (etc.) matching the method signature.
 11. **`MSFindSymbol(NULL, …)`** — use `MSFindSymbol(MSGetImageByName("/path/to/dylib"), "_symbol")`.
+12. **Binary filter `.plist` in git** — use XML in the repo; `FINALPACKAGE=1` bplist-converts on release.
 
 ## Review checklist
 
@@ -267,6 +283,7 @@ When writing or reviewing tweak code:
 - [ ] No redundant `respondsToSelector:` where OS floor or `%group` already guarantees the API; runtime checks only where version checks are intentionally light
 - [ ] No `objc_msgSend` for normal calls; use `[receiver …]` with headers for private selectors
 - [ ] Private ivar access in the tweak dylib uses `MSHookIvar`, not manual runtime offset/`object_getIvar` (runtime OK only in non-Substrate targets)
+- [ ] Filter **`.plist`** is XML in source; release binary conversion comes from **`make package FINALPACKAGE=1`**
 
 ## Additional resources
 
