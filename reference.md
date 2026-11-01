@@ -51,6 +51,11 @@ Use `%init(fn = MSFindSymbol(MSGetImageByName("/path/to/Owner.dylib"), "_fn"))` 
 }
 ```
 
+## `%init` and `%group`
+
+- Each **`%group`** may appear in **`%init` only once** in a Logos file. Logos errors on `re-%init` even when the two calls sit in different `if`/`else` branches.
+- Version-specific hooks: use **separate groups** (`%init(iOS9)` vs `%init(iOS8)`), or **one** `%init` with runtime `ClassName=expr` substitutions computed before the init line.
+
 ## Instance variables
 
 **Prefer (Substrate-linked tweak code):**

@@ -156,6 +156,34 @@ Inside a hook body, the **`MSIvarHook(type, name)`** macro (Substrate) is equiva
 ```
 
 - Call `%init` or `%init(GroupName)` from `%ctor` (or another function) for grouped hooks; do not rely on auto-init for grouped code.
+- **One `%init` per `%group` in the whole file.** Logos records initialization at preprocess time. A second `%init(ThatGroup)` anywhere (including the other branch of `if`/`else`) is a **compile error** (`re-%init of %group`). Branches do not make two inits “conditional” at runtime; both directives are still seen.
+
+  **OK:** different groups, one init each:
+
+  ```logos
+  %ctor {
+      if (kCFCoreFoundationVersionNumber > 1200) {
+          %init(iOS9);
+      } else {
+          %init(iOS8);
+      }
+  }
+  ```
+
+  **Not OK:** same group twice:
+
+  ```logos
+  %ctor {
+      if (useLegacy) {
+          %init(SharedHooks, Foo = objc_getClass("LegacyFoo"));
+      } else {
+          %init(SharedHooks, Foo = objc_getClass("ModernFoo"));  // re-%init error
+      }
+  }
+  ```
+
+  **Fix:** use separate `%group`s, or pick the `ClassName=expr` arguments once and call **`%init(SharedHooks, Foo = chosenClass)`** a single time after computing `chosenClass` in ordinary C/ObjC.
+
 - Use `%init(ClassName = objc_getClass("Swift.Module.Class"))` for Swift/mangled or awkward class names.
 
 ## API availability: version checks vs `respondsToSelector`
@@ -219,12 +247,13 @@ Note: `%hookf` is **not** supported with `generator=internal`. Pick the generato
 2. **Missing `%end`** or nesting `%hook` inside a method (invalid; Logos errors).
 3. **Calling `%orig` in a `%new` method** — unsupported; call super or another selector explicitly if needed.
 4. **Forgetting `%init` for `%group`** — hooks never run.
-5. **Duplicate hooks** for the same class/method in one group — undefined behavior; merge blocks.
-6. **Using `%hookf` inside `%hook`** — `%hookf` is top-level (except inside `%group`).
-7. **`objc_msgSend` instead of `[obj msg]`** — declare the API and use bracket syntax.
-8. **`ivar_getOffset` / `object_getIvar` in tweak code** — use `MSHookIvar` when Substrate is linked.
-9. **Bare `%new` without type encoding** — use `%new(v@:)` (etc.) matching the method signature.
-10. **`MSFindSymbol(NULL, …)`** — use `MSFindSymbol(MSGetImageByName("/path/to/dylib"), "_symbol")`.
+5. **Two `%init`s for the same `%group`** (e.g. one per `if`/`else` branch) — Logos rejects `re-%init`; use separate groups or one `%init` with computed `Class=expr` args.
+6. **Duplicate hooks** for the same class/method in one group — undefined behavior; merge blocks.
+7. **Using `%hookf` inside `%hook`** — `%hookf` is top-level (except inside `%group`).
+8. **`objc_msgSend` instead of `[obj msg]`** — declare the API and use bracket syntax.
+9. **`ivar_getOffset` / `object_getIvar` in tweak code** — use `MSHookIvar` when Substrate is linked.
+10. **Bare `%new` without type encoding** — use `%new(v@:)` (etc.) matching the method signature.
+11. **`MSFindSymbol(NULL, …)`** — use `MSFindSymbol(MSGetImageByName("/path/to/dylib"), "_symbol")`.
 
 ## Review checklist
 
@@ -232,7 +261,7 @@ When writing or reviewing tweak code:
 
 - [ ] Hooks live in `.x`/`.xm` with `%hook` / `%hookf`, not raw `MSHook*`
 - [ ] New tweak methods use `%new(typeencoding)` with exact encodings; ivar-like state uses `%property` where appropriate
-- [ ] `%orig` usage is correct; grouped hooks have explicit `%init`
+- [ ] `%orig` usage is correct; each `%group` has exactly **one** `%init` in the file (not split across `if`/`else` for the same group)
 - [ ] Dynamic `%hookf` symbols resolved with **`MSGetImageByName` + `MSFindSymbol(image, …)`**, never `MSFindSymbol(NULL, …)`
 - [ ] Default **`Tweak.x`** unless the file uses C++ or `MSHookIvar`; do not use `.xm` “just because”
 - [ ] No redundant `respondsToSelector:` where OS floor or `%group` already guarantees the API; runtime checks only where version checks are intentionally light
