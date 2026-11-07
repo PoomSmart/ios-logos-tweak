@@ -1,6 +1,6 @@
 ---
 name: ios-logos-tweak
-description: Best practices for iOS jailbreak tweaks using Theos and Logos (%hook, %hookf, %new, %orig, %init). Prefer Logos and Substrate helpers (MSHookIvar) over manual hook/ivar runtime APIs. Covers API availability (respondsToSelector vs @available) and bracket messaging. Use when writing or reviewing .x/.xm tweak code, MobileSubstrate/libhooker hooks, swizzling, or Theos Tweak projects.
+description: Best practices for iOS jailbreak tweaks using Theos and Logos (%hook, %hookf, %new, %orig, %init). Prefer Logos and Substrate helpers (MSHookIvar) over manual hook/ivar runtime APIs. Covers firmware checks (IS_IOS_OR_NEWER vs @available vs respondsToSelector) and bracket messaging. Use when writing or reviewing .x/.xm tweak code, MobileSubstrate/libhooker hooks, swizzling, or Theos Tweak projects.
 ---
 
 # iOS Logos Tweak Best Practices
@@ -144,14 +144,16 @@ Inside a hook body, the **`MSIvarHook(type, name)`** macro (Substrate) is equiva
 - Use `%group` when hooks must be **conditional** or **delayed**:
 
 ```logos
-%group iOS17
+#import <version.h>
+
+%group iOS16
 %hook SomeNewClass
 - (void)foo { %orig; }
 %end
 %end
 
 %ctor {
-    if (@available(iOS 17, *)) %init(iOS17);
+    if (IS_IOS_OR_NEWER(iOS_16_0)) %init(iOS16);
 }
 ```
 
@@ -162,7 +164,7 @@ Inside a hook body, the **`MSIvarHook(type, name)`** macro (Substrate) is equiva
 
   ```logos
   %ctor {
-      if (kCFCoreFoundationVersionNumber > 1200) {
+      if (IS_IOS_OR_NEWER(iOS_9_0)) {
           %init(iOS9);
       } else {
           %init(iOS8);
@@ -186,25 +188,48 @@ Inside a hook body, the **`MSIvarHook(type, name)`** macro (Substrate) is equiva
 
 - Use `%init(ClassName = objc_getClass("Swift.Module.Class"))` for Swift/mangled or awkward class names.
 
-## API availability: version checks vs `respondsToSelector`
+## Firmware and API availability
 
-Pick **one** primary strategy per code path. Mixing `@available`, `%group`, and `respondsToSelector` on the same feature adds noise without extra safety.
+Pick **one** primary strategy per code path. Mixing `IS_IOS_OR_NEWER`, `@available`, `%group`, and `respondsToSelector` on the same feature adds noise without extra safety.
+
+### Hook groups and private behavior: `IS_IOS_OR_NEWER`
+
+Default for **`%ctor` / `%init`**, private SpringBoard/app internals, and point-release or range checks. `#import <version.h>` (Theos `vendor/include`) and compare `kCFCoreFoundationVersionNumber`:
+
+```objc
+if (IS_IOS_OR_NEWER(iOS_16_0)) { ... }
+if (IS_IOS_BETWEEN(iOS_14_0, iOS_14_8)) { ... }
+```
+
+`@available` tracks marketing OS version and SDK availability annotations. Those do not describe private classes. A high `IPHONEOS_DEPLOYMENT_VERSION` can also **compile away** `@available` checks.
+
+If `version.h` has no constant yet, **add** `kCFCoreFoundationVersionNumber_iOS_X_Y` and keep using the macros. Do not switch the whole tweak to `@available` just because one new OS is missing from the table.
+
+### Public SDK APIs: `@available`
+
+Use `@available(iOS 16, *)` at **call sites** for APIs the SDK marks with availability (compiler warnings, weak linking). Do not use it as the gate for Logos `%group`s of private hooks.
+
+```objc
+if (@available(iOS 16, *)) {
+    [view setPreferredFrameRateRange:...];
+}
+```
 
 ### When the deployment floor already includes the API
 
-If the tweak only runs on iOS versions where the selector **always exists** (declared minimum in the project, or hooks live in a `%group` initialized only on that OS), **call the API directly**. Do not wrap every use in `respondsToSelector:` / `instancesRespondToSelector:` / `+[Class respondsToSelector:]`.
+If the tweak only runs on iOS versions where the selector **always exists** (package minimum, or hooks live in a `%group` initialized only on that OS), **call it directly**. Do not wrap every use in `respondsToSelector:` / `instancesRespondToSelector:`.
 
-Version gating at init (`%group` + `%init`, `@available` in `%ctor`) is enough; inside those hooks, treat the method as present.
+Version gating at init (`%group` + `%init` with `IS_IOS_OR_NEWER`) is enough; inside those hooks, treat the method as present.
 
-### When runtime checks make sense
+### Optional selectors without a version table: `respondsToSelector:`
 
-Use `respondsToSelector:` (and class-side equivalents) when:
+Use when:
 
 - The tweak supports a **wide OS range** with **few** explicit version checks, and
-- A selector appears only on some releases (Apple added a method mid-cycle, private API drift, optional app-internal helpers), and
+- A selector appears only on some releases (mid-cycle add, private API drift, optional helpers), and
 - You are calling across classes you do not hook (not choosing whether to install a Logos hook).
 
-Example: one optional call on a shared code path without adding `@available(iOS X, *)` at every call site.
+Prefer **class** checks (`+[SomeClass instancesRespondToSelector:]`) when the method is on the class, not per instance.
 
 ```objc
 if ([obj respondsToSelector:@selector(newStyleLayout)]) {
@@ -214,13 +239,12 @@ if ([obj respondsToSelector:@selector(newStyleLayout)]) {
 }
 ```
 
-Prefer **class** checks (`+[SomeClass instancesRespondToSelector:]`) when the method is implemented on the class, not overridden per instance.
-
 ### What to avoid
 
-- `respondsToSelector:` before every message send when `%init(iOS17)` or the package minimum already guarantees the selector.
-- `respondsToSelector:` **and** `@available` for the same branch unless they guard different risks (e.g. SDK compile vs runtime on an old binary).
-- Using runtime checks instead of `%group` for **entire hook sets** that only apply on one OS; use `%group` + `%init` so hooks are not installed on unsupported versions.
+- `@available` in `%ctor` to decide `%init` of private/internal hook groups; use `IS_IOS_OR_NEWER` / `IS_IOS_BETWEEN`.
+- `respondsToSelector:` before every send when `%init(iOS16)` or the package minimum already guarantees the selector.
+- Stacking `respondsToSelector:`, `@available`, and `IS_IOS_OR_NEWER` on the same branch unless they guard different risks.
+- Using runtime checks instead of `%group` for **entire hook sets** that only apply on one OS.
 
 ## Other Logos tools (prefer over manual runtime)
 
@@ -270,6 +294,7 @@ Commit the XML source; let Theos optimize at package time.
 10. **Bare `%new` without type encoding** — use `%new(v@:)` (etc.) matching the method signature.
 11. **`MSFindSymbol(NULL, …)`** — use `MSFindSymbol(MSGetImageByName("/path/to/dylib"), "_symbol")`.
 12. **Binary filter `.plist` in git** — use XML in the repo; `FINALPACKAGE=1` bplist-converts on release.
+13. **`@available` to `%init` private hook groups** — use `IS_IOS_OR_NEWER` from `<version.h>`.
 
 ## Review checklist
 
@@ -280,6 +305,7 @@ When writing or reviewing tweak code:
 - [ ] `%orig` usage is correct; each `%group` has exactly **one** `%init` in the file (not split across `if`/`else` for the same group)
 - [ ] Dynamic `%hookf` symbols resolved with **`MSGetImageByName` + `MSFindSymbol(image, …)`**, never `MSFindSymbol(NULL, …)`
 - [ ] Default **`Tweak.x`** unless the file uses C++ or `MSHookIvar`; do not use `.xm` “just because”
+- [ ] Firmware / `%group` gates use **`IS_IOS_OR_NEWER`** (or `IS_IOS_BETWEEN`); `@available` only at public SDK call sites
 - [ ] No redundant `respondsToSelector:` where OS floor or `%group` already guarantees the API; runtime checks only where version checks are intentionally light
 - [ ] No `objc_msgSend` for normal calls; use `[receiver …]` with headers for private selectors
 - [ ] Private ivar access in the tweak dylib uses `MSHookIvar`, not manual runtime offset/`object_getIvar` (runtime OK only in non-Substrate targets)

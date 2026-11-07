@@ -55,6 +55,7 @@ Use `%init(fn = MSFindSymbol(MSGetImageByName("/path/to/Owner.dylib"), "_fn"))` 
 
 - Each **`%group`** may appear in **`%init` only once** in a Logos file. Logos errors on `re-%init` even when the two calls sit in different `if`/`else` branches.
 - Version-specific hooks: use **separate groups** (`%init(iOS9)` vs `%init(iOS8)`), or **one** `%init` with runtime `ClassName=expr` substitutions computed before the init line.
+- Gate those groups with **`IS_IOS_OR_NEWER` / `IS_IOS_BETWEEN`** (`#import <version.h>`), not `@available`. Reserve `@available` for SDK-annotated public APIs at the call site. If `version.h` lacks a new CF constant, add it rather than switching the gate.
 
 ## Filter plist
 
